@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SGSM — Phase 1 et export Google Sheets</title>
+<style>
+:root{--bg:#f6f8f7;--fg:#13272c;--mut:#4d6469;--card:#fff;--line:#cfdcd9;--pri:#0f5560;--acc:#c98a12;--code:#eaf0ef}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1b1e;--fg:#e4eeec;--mut:#9bb2b5;--card:#152a2e;--line:#2a444a;--pri:#5cc1cf;--acc:#e8b34a;--code:#0a1517}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{background:var(--pri);color:#fff;padding:2.5rem 1.25rem}
+header div,main{max-width:900px;margin:0 auto}
+h1,h2,h3{font-family:Georgia,"Times New Roman",serif;line-height:1.25}
+h1{margin:0 0 .4rem;font-size:2rem}
+header p{margin:0;opacity:.9;max-width:60ch}
+main{padding:1rem 1.25rem 4rem}
+nav{display:flex;flex-wrap:wrap;gap:.5rem;margin:1.2rem 0}
+nav a{padding:.3rem .7rem;border:1px solid var(--line);border-radius:6px;color:var(--pri);text-decoration:none;font-size:.9rem;background:var(--card)}
+h2{margin-top:2.6rem;padding-top:.6rem;border-top:3px solid var(--acc);font-size:1.5rem}
+h3{margin:1.6rem 0 .4rem;font-size:1.1rem;color:var(--pri)}
+p,li{max-width:75ch}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+th,td{padding:.5rem .7rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{background:var(--code)}
+tr:last-child td{border-bottom:0}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:1rem;overflow-x:auto;font-size:.82rem;line-height:1.5}
+code{font-family:ui-monospace,Consolas,monospace;font-size:.88em}
+.note{border-left:4px solid var(--acc);background:var(--card);padding:.7rem 1rem;border-radius:0 8px 8px 0;margin:1rem 0}
+:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+</style>
+</head>
+<body>
+<header><div>
+<h1>SGSM — Système de Gestion Scolaire Multiplateforme</h1>
+<p>Phase 1 : analyse, architecture, base de données, plan de développement. Annexe : démarche précise pour remonter les données vers Google Sheets.</p>
+</div></header>
+<main>
+<nav aria-label="Sommaire">
+<a href="#analyse">Analyse</a><a href="#archi">Architecture</a><a href="#bdd">Base de données</a><a href="#matricule">Matricule</a><a href="#roles">Rôles</a><a href="#plan">Plan</a><a href="#sheets">Export Google Sheets</a><a href="#questions">Questions</a>
+</nav>
+
+<h2 id="analyse">1. Analyse des contraintes</h2>
+<ul>
+<li><b>Une seule base centrale</b> : tous les appareils (Windows, macOS, Linux, Android, iOS, navigateur) parlent à la même API. Pas de logique métier dans les clients.</li>
+<li><b>Fiabilité du matricule</b> : plusieurs secrétaires peuvent inscrire en même temps. La numérotation doit donc être faite par la base, dans une transaction.</li>
+<li><b>Connexion internet irrégulière</b> (contexte probable en Haïti) : le mode hors ligne limité est une vraie exigence, pas un bonus. Il est prévu pour la saisie des présences et des notes uniquement.</li>
+<li><b>Deux monnaies</b> : chaque paiement garde sa devise d’origine, son taux appliqué et sa contre-valeur. Un taux modifié plus tard ne change jamais un paiement passé.</li>
+<li><b>Données d’enfants</b> : accès par rôle, journal d’activité, champs médicaux chiffrés, aucune donnée publique.</li>
+</ul>
+
+<h2 id="archi">2. Architecture proposée</h2>
+<div class="tw"><table>
+<tr><th>Couche</th><th>Choix</th><th>Justification</th></tr>
+<tr><td>Frontend unique</td><td>React + TypeScript (Vite), composants shadcn/ui, Recharts</td><td>Une seule base de code pour le web, le bureau et le mobile.</td></tr>
+<tr><td>Bureau</td><td>Tauri</td><td>Même frontend, installeur léger pour Windows, macOS et Linux.</td></tr>
+<tr><td>Mobile</td><td>Capacitor (même frontend, Android et iOS)</td><td>Évite un second code (React Native) ; les écrans restent identiques.</td></tr>
+<tr><td>Backend</td><td>Node.js + NestJS + Prisma</td><td>API REST typée, modules séparés, validation (zod/class-validator), migrations.</td></tr>
+<tr><td>Base</td><td>PostgreSQL 16</td><td>Transactions, contraintes, verrous de ligne pour le matricule.</td></tr>
+<tr><td>Authentification</td><td>JWT court + refresh token en base, mots de passe Argon2id</td><td>Sessions multi-appareils révocables, déconnexion sur inactivité.</td></tr>
+<tr><td>PDF</td><td>Puppeteer (HTML vers PDF) côté serveur</td><td>Cartes, bulletins et reçus avec le même rendu partout.</td></tr>
+<tr><td>Hors ligne</td><td>File d’actions locale (IndexedDB) + clés d’idempotence</td><td>Pas de doublon à la resynchronisation.</td></tr>
+<tr><td>Fichiers</td><td>Stockage privé (disque ou S3 compatible), URL signées</td><td>Photos et justificatifs jamais publics.</td></tr>
+<tr><td>Hébergement</td><td>Docker Compose : API, PostgreSQL, sauvegarde nocturne (pg_dump chiffré)</td><td>Installation simple sur un VPS ou un serveur local de l’école.</td></tr>
+</table></div>
+<div class="note">Les choix sont volontairement limités : un langage (TypeScript) du serveur à l’écran, une base, un frontend.</div>
+
+<h2 id="bdd">3. Structure de la base de données</h2>
+<div class="tw"><table>
+<tr><th>Table</th><th>Clés et contraintes principales</th></tr>
+<tr><td>utilisateurs, roles, permissions, roles_permissions</td><td>email UNIQUE ; utilisateurs.role_id → roles ; table de liaison à clé composite</td></tr>
+<tr><td>annees_academiques</td><td>une seule année « active » (index unique partiel)</td></tr>
+<tr><td>niveaux, classes, matieres, classes_matieres</td><td>classes.niveau_id, classes.annee_id ; coefficient et enseignant par ligne de liaison ; capacité ≥ 0</td></tr>
+<tr><td>eleves</td><td><b>matricule UNIQUE NOT NULL</b>, non modifiable ; statut (actif, transféré, archivé, inactif) ; aucune suppression physique</td></tr>
+<tr><td>parents, eleves_parents</td><td>lien N-N avec type de relation ; base du portail parent</td></tr>
+<tr><td>enseignants, employes</td><td>lien optionnel vers utilisateurs ; affectations dans classes_matieres</td></tr>
+<tr><td>inscriptions</td><td>UNIQUE (eleve_id, annee_id) ; classe_id ; date ; statut ; l’historique scolaire = l’ensemble des lignes d’un élève</td></tr>
+<tr><td>examens, evaluations, notes</td><td>notes UNIQUE (evaluation_id, eleve_id) ; valeur entre 0 et le barème</td></tr>
+<tr><td>presences</td><td>UNIQUE (eleve_id, date, creneau) ; statut (présent, absent, retard) ; motif</td></tr>
+<tr><td>emplois_du_temps, salles</td><td>contrainte d’exclusion (enseignant, salle, classe) sur les plages horaires : les conflits sont refusés par la base</td></tr>
+<tr><td>frais, factures, lignes_facture</td><td>frais par niveau et année ; facture liée à une inscription</td></tr>
+<tr><td>paiements, recus</td><td>reference UNIQUE ; devise (USD/HTG), montant, taux_applique ; reçu 1-1 avec le paiement ; paiements non modifiables (annulation = écriture inverse)</td></tr>
+<tr><td>taux_change</td><td>devise, taux, date_effet ; historique conservé</td></tr>
+<tr><td>notifications, annonces</td><td>destinataire (utilisateur ou rôle), lu/non lu, canal (interne ; e-mail, SMS, WhatsApp plus tard)</td></tr>
+<tr><td>documents</td><td>chemin privé, type, hash ; lié à un élève ou à un employé</td></tr>
+<tr><td>journal_activite</td><td>utilisateur, action, entité, avant/après (JSON), IP, date ; écriture seule</td></tr>
+<tr><td>matricule_sequences</td><td>annee PRIMARY KEY, dernier INT (voir ci-dessous)</td></tr>
+<tr><td>export_queue</td><td>file d’envoi vers Google Sheets (voir section 7)</td></tr>
+</table></div>
+
+<h2 id="matricule">4. Matricule : génération sans doublon</h2>
+<p>Le numéro est pris dans la base, au moment de la validation, dans la même transaction que la création de l’élève. Le <code>UPDATE</code> verrouille la ligne de l’année : deux secrétaires simultanées sont servies l’une après l’autre. Si la transaction échoue, le compteur revient en arrière, donc pas de trou non plus.</p>
+<pre><code>CREATE TABLE matricule_sequences (annee INT PRIMARY KEY, dernier INT NOT NULL DEFAULT 0);
+ALTER TABLE eleves ADD CONSTRAINT eleves_matricule_uk UNIQUE (matricule);
+
+-- dans la transaction de validation d'inscription
+INSERT INTO matricule_sequences (annee, dernier) VALUES (2026, 1)
+ON CONFLICT (annee) DO UPDATE SET dernier = matricule_sequences.dernier + 1
+RETURNING 'SGSM-' || annee || '-' || lpad(dernier::text, 4, '0') AS matricule;</code></pre>
+<p>Le matricule est ensuite protégé en écriture par un déclencheur (<code>BEFORE UPDATE</code> qui refuse toute modification). Une réinscription ou un changement de classe crée une ligne dans <code>inscriptions</code> et ne touche jamais le matricule.</p>
+
+<h2 id="roles">5. Rôles et permissions</h2>
+<div class="tw"><table>
+<tr><th>Rôle</th><th>Accès</th></tr>
+<tr><td>Administrateur</td><td>Tout, y compris utilisateurs, configuration, journaux</td></tr>
+<tr><td>Directeur</td><td>Lecture des statistiques et rapports ; validation des opérations sensibles (annulation de paiement, archivage)</td></tr>
+<tr><td>Secrétaire</td><td>Inscriptions, dossiers, réinscriptions, documents administratifs</td></tr>
+<tr><td>Comptable</td><td>Frais, paiements, factures, reçus, rapports financiers</td></tr>
+<tr><td>Enseignant</td><td>Uniquement ses classes : notes, présences, emploi du temps</td></tr>
+<tr><td>Parent</td><td>Uniquement ses enfants liés (contrôle fait côté serveur à chaque requête)</td></tr>
+<tr><td>Élève</td><td>Ses notes, bulletins, emploi du temps</td></tr>
+</table></div>
+
+<h2 id="plan">6. Plan de développement</h2>
+<ol>
+<li><b>Fondations</b> : dépôt Git, Docker Compose, migrations, authentification, rôles, journal d’activité.</li>
+<li><b>Cœur élèves</b> : années, niveaux, classes, inscriptions, matricule, fiche PDF, carte scolaire, tests de concurrence du matricule.</li>
+<li><b>Pédagogie</b> : matières, notes, moyennes pondérées, classement, bulletins PDF.</li>
+<li><b>Finance</b> : frais, paiements partiels, USD/HTG, reçus, factures, soldes.</li>
+<li><b>Vie scolaire</b> : présences, emploi du temps avec détection de conflits, notifications.</li>
+<li><b>Portails et rapports</b> : parents, élèves, tableau de bord, statistiques, exports.</li>
+<li><b>Multiplateforme</b> : Tauri, Capacitor, mode hors ligne limité, synchronisation.</li>
+<li><b>Tests et sécurité</b> : tests unitaires et d’intégration, revue des permissions, sauvegarde et restauration, documentation.</li>
+</ol>
+<p>Chaque étape est livrée avec ses tests, et je ne passe à la suivante qu’une fois la précédente vérifiée.</p>
+
+<h2 id="sheets">7. Remontée des données vers Google Sheets</h2>
+<p>Principe : <b>la base PostgreSQL reste la source de vérité</b>. Google Sheets est un miroir en lecture, alimenté à sens unique. Chaque changement important (inscription, paiement, note, absence) est inscrit dans une file <code>export_queue</code> dans la même transaction, puis un worker l’envoie à Google. Si internet tombe, rien n’est perdu : l’envoi reprend plus tard.</p>
+
+<h3>Étape 1 — Créer le fichier Google Sheets</h3>
+<ol>
+<li>Dans Google Drive : <b>Nouveau → Google Sheets</b>, nommez-le <code>SGSM_Export</code>.</li>
+<li>Créez les onglets <code>Eleves</code>, <code>Paiements</code>, <code>Notes</code>, <code>Presences</code>.</li>
+<li>Ligne 1 de chaque onglet, colonne A toujours = clé unique :
+<ul>
+<li>Eleves : <code>matricule | nom | prenom | sexe | classe | annee | statut | maj</code></li>
+<li>Paiements : <code>reference | matricule | montant | devise | taux | montant_usd | date | maj</code></li>
+<li>Notes : <code>cle | matricule | matiere | evaluation | note | bareme | date | maj</code></li>
+<li>Presences : <code>cle | matricule | date | statut | motif | maj</code></li>
+</ul></li>
+<li>Ne partagez ce fichier qu’avec la direction : il contient des données d’élèves.</li>
+</ol>
+
+<h3>Étape 2 — Installer le récepteur (Google Apps Script)</h3>
+<ol>
+<li>Dans le fichier : <b>Extensions → Apps Script</b>. Supprimez le contenu et collez :</li>
+</ol>
+<pre><code>function doPost(e) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const p = JSON.parse(e.postData.contents);
+    const secret = PropertiesService.getScriptProperties().getProperty('SGSM_TOKEN');
+    if (p.token !== secret) return rep({ ok: false, erreur: 'non autorise' });
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sh = ss.getSheetByName(p.feuille);
+    if (!sh) return rep({ ok: false, erreur: 'feuille inconnue: ' + p.feuille });
+
+    const entetes = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    const n = sh.getLastRow();
+    const cles = n > 1 ? sh.getRange(2, 1, n - 1, 1).getValues().flat().map(String) : [];
+
+    p.lignes.forEach(function (obj) {
+      const ligne = entetes.map(function (h) { return obj[h] === undefined ? '' : obj[h]; });
+      const i = cles.indexOf(String(ligne[0]));
+      if (i === -1) {                      // nouvelle clé : on ajoute
+        sh.appendRow(ligne);
+        cles.push(String(ligne[0]));
+      } else {                             // clé connue : on met à jour (pas de doublon)
+        sh.getRange(i + 2, 1, 1, ligne.length).setValues([ligne]);
+      }
+    });
+    return rep({ ok: true, recu: p.lignes.length });
+  } finally {
+    lock.releaseLock();
+  }
+}
+function rep(o) {
+  return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
+}</code></pre>
+<ol start="2">
+<li>Engrenage <b>Paramètres du projet → Propriétés du script → Ajouter</b> : nom <code>SGSM_TOKEN</code>, valeur = une longue chaîne aléatoire (générez-la avec <code>openssl rand -hex 32</code>). Gardez-la, elle ira dans le <code>.env</code> du serveur.</li>
+<li><b>Déployer → Nouveau déploiement → type « Application Web »</b>. Exécuter en tant que : <b>Moi</b>. Qui a accès : <b>Tout le monde</b> (le jeton secret protège l’accès). Autorisez les droits demandés.</li>
+<li>Copiez l’<b>URL de l’application Web</b> (elle se termine par <code>/exec</code>).</li>
+</ol>
+
+<h3>Étape 3 — Variables d’environnement du serveur</h3>
+<pre><code>GSHEETS_URL=https://script.google.com/macros/s/XXXXXXXX/exec
+GSHEETS_TOKEN=la_valeur_de_SGSM_TOKEN
+GSHEETS_BATCH=200
+GSHEETS_INTERVAL_SEC=60</code></pre>
+<p>Ces valeurs ne vont jamais dans le dépôt Git ni dans le frontend.</p>
+
+<h3>Étape 4 — File d’envoi dans PostgreSQL</h3>
+<pre><code>CREATE TABLE export_queue (
+  id          BIGSERIAL PRIMARY KEY,
+  feuille     TEXT NOT NULL,          -- Eleves, Paiements, Notes, Presences
+  cle         TEXT NOT NULL,          -- matricule, reference de paiement, ...
+  payload     JSONB NOT NULL,         -- la ligne à écrire
+  statut      TEXT NOT NULL DEFAULT 'attente',  -- attente | envoye | erreur
+  tentatives  INT  NOT NULL DEFAULT 0,
+  erreur      TEXT,
+  cree_le     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ON export_queue (statut, id);</code></pre>
+<p>Le service métier ajoute la ligne dans la même transaction que l’opération (inscription validée, paiement enregistré, etc.) : si l’opération est annulée, l’export l’est aussi.</p>
+
+<h3>Étape 5 — Worker d’envoi (Node.js, toutes les 60 s)</h3>
+<pre><code>// export-sheets.worker.ts
+export async function envoyerVersSheets(db) {
+  const { rows } = await db.query(
+    `SELECT id, feuille, payload FROM export_queue
+     WHERE statut = 'attente' ORDER BY id
+     LIMIT $1 FOR UPDATE SKIP LOCKED`, [Number(process.env.GSHEETS_BATCH)]);
+  if (!rows.length) return;
+
+  const parFeuille = {};
+  rows.forEach(r => (parFeuille[r.feuille] ??= []).push(r));
+
+  for (const [feuille, items] of Object.entries(parFeuille)) {
+    const ids = items.map(i => i.id);
+    try {
+      const res = await fetch(process.env.GSHEETS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          token: process.env.GSHEETS_TOKEN,
+          feuille,
+          lignes: items.map(i => i.payload),
+        }),
+      });
+      const r = await res.json();
+      if (!r.ok) throw new Error(r.erreur);
+      await db.query(`UPDATE export_queue SET statut='envoye' WHERE id = ANY($1)`, [ids]);
+    } catch (e) {
+      await db.query(
+        `UPDATE export_queue SET tentatives = tentatives + 1, erreur = $2,
+         statut = CASE WHEN tentatives >= 9 THEN 'erreur' ELSE 'attente' END
+         WHERE id = ANY($1)`, [ids, String(e.message)]);
+    }
+  }
+}
+// planifié avec @nestjs/schedule : @Interval(60000)</code></pre>
+<p>Points importants : <code>SKIP LOCKED</code> évite que deux instances envoient les mêmes lignes ; <code>text/plain</code> évite un blocage de type CORS ; la clé en colonne A rend l’envoi <b>idempotent</b> (renvoyer deux fois met à jour la ligne au lieu de la dupliquer).</p>
+
+<h3>Étape 6 — Ce qui est envoyé (et ce qui ne l’est pas)</h3>
+<ul>
+<li>Envoyé : matricule, nom, prénom, classe, statut, paiements, notes, présences.</li>
+<li>Jamais envoyé : informations médicales, téléphones des parents, documents, photos, mots de passe.</li>
+<li>Pour une première reprise (élèves déjà présents), un bouton administrateur « Exporter tout » remplit la file avec toutes les lignes existantes.</li>
+</ul>
+
+<h3>Étape 7 — Tester</h3>
+<ol>
+<li>Inscrivez un élève de test : en moins d’une minute, une ligne <code>SGSM-2026-0001</code> apparaît dans <code>Eleves</code>.</li>
+<li>Modifiez sa classe : la même ligne est mise à jour, sans nouvelle ligne.</li>
+<li>Coupez internet côté serveur, enregistrez un paiement, rétablissez : le paiement arrive dans la feuille.</li>
+<li>Envoyez une requête avec un mauvais jeton : réponse « non autorisé », rien n’est écrit.</li>
+</ol>
+<div class="note"><b>Limites à connaître.</b> Apps Script plafonne le volume d’appels par jour et reste lent au-delà de quelques dizaines de milliers de lignes par feuille. Pour une école, c’est largement suffisant ; au-delà, on passera à l’API Google Sheets avec un compte de service (même file, seul le worker change). Google Sheets sert à consulter et analyser : ne modifiez pas les données dans la feuille, elles seraient écrasées au prochain envoi.</div>
+
+<h2 id="questions">8. Questions avant validation</h2>
+<ol>
+<li>Le serveur sera-t-il hébergé en ligne (VPS) ou dans l’école, sur un ordinateur local ?</li>
+<li>Combien d’élèves environ, et combien de secrétaires saisiront en même temps ?</li>
+<li>Le barème des notes (sur 10, 20, 100) et les périodes (trimestres, étapes) sont-ils les mêmes pour tous les niveaux ?</li>
+<li>Faut-il les deux devises sur chaque reçu, ou la devise payée seulement ?</li>
+<li>L’école a-t-elle déjà des données (Excel) à importer ?</li>
+</ol>
+<p>Dès votre validation, je passe à l’étape 1 du plan : fondations, base PostgreSQL et authentification.</p>
+</main>
+</body>
+</html>
